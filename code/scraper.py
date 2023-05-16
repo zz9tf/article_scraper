@@ -83,6 +83,7 @@ class scrap:
 
     def _download_articles(self):
         articles = []
+        scopus_results = []
         limit_num = 5000 if self.cursor is None else 0
         count_num = 25
         # loop to download pdf link
@@ -98,6 +99,9 @@ class scrap:
                 break
 
             js = self._search_article_names_from_scopus(i)
+            entries = js['search-results']['entry']
+            scopus_results += [s._parse_article(entry) for entry in entries]
+            pd.DataFrame(scopus_results).to_csv(os.path.join(self.log_folder, 'result.csv'))
             
             if js is None:
                 input("Something wrong with search article")
@@ -244,79 +248,44 @@ class scrap:
         # Go over all articles I get in one turn google search
         for i, row in results[['title', 'doi', 'scopus']].iterrows():
             title = row['title']
-            doi = row['doi']
-            scopus_link = row['scopus']
             
             num_articles = len(articles)
             success_download_num = len(articles)+self.downloaded
             
             if self.verbose:
                 print("Downloading article: %s" % title)
-                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 100*(success_download_num)/self.inquire_num, link))
-            if self._download_single_pdf(title, doi, scopus_link):
-                articles.append({"title": title,"link":scopus_link})
+                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 100*(success_download_num)/self.inquire_num))
+            if self._download_single_pdf(title):
+                articles.append(title)
                 break
 
             if not self.verbose:
                 if len(articles) > num_articles:
-                    print("{} | Get ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 100*success_download_num/self.inquire_num,  articles[-1]['link']))
+                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 100*success_download_num/self.inquire_num,  articles[-1]))
                 else:
                     print("{} | Article not found: {}".format(i, title))
 
-    def _download_single_pdf(self, title, doi, scopus_link):
-        # Normal get request
-        try:
-            r_url = requests.get(url)
-        except:
-            r_url = None
+    def _download_single_pdf(self, title):
+        # Get link from google scholar
+        params = {
+            'hl': 'en',
+            'q': title,
+            'as_sdt': '0,22',
+            'btnG': ''
+        }
+        url = "https://scholar.google.com/scholar"
+        r = requests.get(url, params)
+        print(r.url)
+        with open(self.view_html, 'wb') as f:
+            f.write(r.content)
         
-        # sci-hub get request
-        try:
-            r_sci_hub = requests.get('https://sci-hub.ru/{}'.format(url))
-            
-            with open(self.view_html, 'wb') as f:
-                f.write(r_sci_hub.content)
-                r_sci_hub = BeautifulSoup(r_sci_hub.content, 'html.parser')
-            
-            if len(r_sci_hub.findAll("div", {"class":"content"})) != 0:
-                r_sci_hub = None
-            else:
-                url = r_sci_hub.button['onclick'].split("'")[1]
-                if "sci-hub" in url:
-                    url = "https:" + url
-                else:
-                    url = "https://sci-hub.ru"+url
-                r_sci_hub = requests.get(url)
-        except:
-            r_sci_hub = None
-        
-        # Judge which one is successful
-        if r_url is not None and len(r_url.content) > 4 and r_url.content[:4] == "%PDF".encode('ascii'):
-            # Get pdf from url
-            if self.verbose:
-                print("normal: " + r_url.url)
-            r = r_url
-        elif r_sci_hub is not None and len(r_sci_hub.content) > 4 and r_sci_hub.content[:4] == "%PDF".encode('ascii'):
-            # Get pdf from sci-hub
-            if self.verbose:
-                print("sci-hub: " + r_sci_hub.url)
-            r = r_sci_hub
-        else:
-            if self.verbose:
-                try:
-                    print("url: \n" + str(r_url.status_code))
-                except:
-                    print("url: \n" + str(r_url))
-                try:
-                    print("sci-hub: \n" + r_sci_hub.findAll("div", {"class":"content"}))       
-                except:
-                    print("sci-hub: \n" + str(r_sci_hub))
-                
-                print("Article not found: {}".format(title))
-            return False
-        self._save_file(title, r)
         
         return True
+    
+    def _remove_between_tags(self, string):
+        pattern = r"<[^>]+>"
+        result = re.sub(pattern, "", string)
+        return result
 
     def _save_file(self, name, r):
         """
@@ -365,3 +334,8 @@ if __name__ == '__main__':
     # # set up
     s = scrap(os.getenv('scopus_api_key'))
     s.set_verbose(True)
+    df = pd.read_csv('result.csv')
+    for row in df['title']:
+        title = s._remove_between_tags(row)
+        s._download_single_pdf(title)
+        time.sleep(1)
