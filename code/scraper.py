@@ -1,4 +1,4 @@
-from utils import read_env, helper_function
+from utils import read_env, helper_function, proxy_headers
 import re
 import os
 import pandas as pd
@@ -7,6 +7,9 @@ import time
 from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
+from urllib.parse import urlparse
+from difflib import SequenceMatcher
 import PyPDF2
 import shutil
 import string
@@ -14,7 +17,14 @@ import string
 class scrap:
     def __init__(self, scopus_api_key, verbose=False) -> None:
         
+        # load keys
         self.scopus_api_key = scopus_api_key
+        
+        # get proxies
+        self.proxies = proxy_headers._get_proxies()
+        
+        # set up user header
+        self.user_agent = UserAgent()
         
         # Create folders
         self.root = Path(__file__).parent.parent
@@ -33,7 +43,7 @@ class scrap:
         else:
             raise ValueError("Expected boolean value, got %s" % verbose)
 
-    def download_articles(self, inquire_num, query, start=0, downloaded=0, cursor=False) -> None:
+    def download_articles(self, inquire_num, query, start=0, downloaded=0, cursor=False, csv_only=False, results=None) -> None:
         """
         Args:
             num (int): The number of articles you want to download.
@@ -43,19 +53,41 @@ class scrap:
             downloaded (int): The number of articles you have sucessfully downloaded. It's for calculate how much articles
                 you still need to download(ie: inquire_num - downloaded = articles_you_still_need)
             cursor (bool): If you are limited for using '*' in api.
+            results (str): load results.csv locally downloaded from scopus.
         """
-        
         self.inquire_num = inquire_num
         self.query = query
         self.start = start
         self.downloaded = downloaded
         self.cursor = '*' if cursor else None  # limit number 5000 if cursor is None
+        self.csv_only = csv_only
         
         if start == 0:
             self.save_path = self._recreate_save_folder()
- 
-        # Download articles
-        return self._download_articles()
+        
+        if results is not None:
+            self._donwload_aticles_based_on_local_csv(results)
+        else:
+            self._download_articles()
+
+    def _donwload_aticles_based_on_local_csv(self, results):
+        df = pd.read_csv(os.path.join(self.log_folder, results))
+        articles = []
+        
+        for i, title in enumerate(df['title']):
+            num_articles = len(articles)
+            success_download_num = len(articles)+self.downloaded
+            
+            if self._download_single_pdf(title):
+                articles.append(title)
+            
+            if not self.verbose:
+                if len(articles) > num_articles:
+                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 
+                                                                                100*success_download_num/self.inquire_num
+                                                                             , self._remove_between_tags(title)))
+                else:
+                    print("{} | Article not found: {}".format(i, title))
 
     def _recreate_save_folder(self):
         """
@@ -99,17 +131,19 @@ class scrap:
                 break
 
             js = self._search_article_names_from_scopus(i)
+            if js is None:
+                input("Something wrong with search article")
             entries = js['search-results']['entry']
             scopus_results += [s._parse_article(entry) for entry in entries]
             pd.DataFrame(scopus_results).to_csv(os.path.join(self.log_folder, 'result.csv'))
+            if self.csv_only:
+                print("Downloaded: {}({})".format(len(scopus_results), self.inquire_num))
             
-            if js is None:
-                input("Something wrong with search article")
-                
-            if limit_num == self.start:
-                limit_num = self._get_maximun_limitation_of_aritlces(js)
-                
-            self._download_articles_based_on_search(js, i, articles)
+            else:
+                if limit_num == self.start:
+                    limit_num = self._get_maximun_limitation_of_aritlces(js)
+                    
+                self._download_articles_based_on_search(js, i, articles)
             i += count_num
 
     def _search_article_names_from_scopus(self, index):
@@ -130,8 +164,12 @@ class scrap:
             par = {'apikey': self.scopus_api_key, 'query': self.query, 'start': index,
                 'httpAccept': 'application/json', 'view': 'STANDARD', 
                 }
-        else:
+        elif self.cursor == '*':
             par = {'apikey': self.scopus_api_key, 'query': self.query, 'start': index, "cursor": self.cursor, 
+                'httpAccept': 'application/json', 'view': 'STANDARD', 
+                }
+        else:
+            par = {'apikey': self.scopus_api_key, 'query': self.query, "cursor": self.cursor, 
                 'httpAccept': 'application/json', 'view': 'STANDARD', 
                 }
         r = requests.get("https://api.elsevier.com/content/search/scopus", params=par)
@@ -139,6 +177,9 @@ class scrap:
         self.remain_usage = r.headers['X-RateLimit-Remaining']
         
         js = r.json()
+        if self.cursor is not None:
+            self.cursor = js['search-results']['cursor']['@next']
+            
         with open(self.view_html, "w") as outfile:
             outfile.write(json.dumps(js, indent=4))
         
@@ -254,32 +295,74 @@ class scrap:
             
             if self.verbose:
                 print("Downloading article: %s" % title)
-                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 100*(success_download_num)/self.inquire_num))
+                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num
+                                                                          , 100*(success_download_num)/self.inquire_num
+                                                                          , self._remove_between_tags(title)))
             if self._download_single_pdf(title):
                 articles.append(title)
                 break
 
             if not self.verbose:
                 if len(articles) > num_articles:
-                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 100*success_download_num/self.inquire_num,  articles[-1]))
+                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num
+                                                                                 , 100*success_download_num/self.inquire_num
+                                                                                 , self._remove_between_tags(title)))
                 else:
                     print("{} | Article not found: {}".format(i, title))
 
     def _download_single_pdf(self, title):
+        title = self._remove_between_tags(title)
         # Get link from google scholar
-        params = {
-            'hl': 'en',
-            'q': title,
-            'as_sdt': '0,22',
-            'btnG': ''
-        }
-        url = "https://scholar.google.com/scholar"
-        r = requests.get(url, params)
-        print(r.url)
+        params = { 'q': title }
+        google_scholar_url = "https://scholar.lanfanshu.cn/scholar"
+        headers = {'User-Agent': self.user_agent.random}
+        if self.verbose:
+            print('Getting article:', title)
+        r = requests.get(google_scholar_url, params=params, headers=headers)
+        
         with open(self.view_html, 'wb') as f:
             f.write(r.content)
+        soup = BeautifulSoup(r.content, 'html.parser')
+        # Get link from google scholar
+        articles = []
+        elements = soup.find_all("h3", {"class": "gs_rt"})
+        for e in elements:
+            for link in e.find_all('a'):
+                if SequenceMatcher(None, title, link.text).ratio() > 0.7:
+                    articles.append({'title': title, 'link': link.get('href')})
         
-        
+        # Search pdf link from article search result
+        for article in articles:
+            if re.search(r'\bpdf\b', article['link'], re.I):
+                # Get pdf from google scholar
+                if self.verbose:
+                    print('Getting article from google scholar:', article['link'])
+                r = requests.get(article['link'])
+                self._save_file(article['title'], r)
+            else:
+                # Get pdf from other websites | Deep search
+                if self.verbose:
+                    print('Searching url:', article['link'])
+                r = requests.get(article['link'])
+                soup = BeautifulSoup(r.content, 'html.parser')
+                pdf_links = soup.find_all('a', href=lambda href: href and re.search(r'\bpdf\b', href, re.I))
+                
+                # Go pdf from other websites
+                prefix = "https://" + self._extract_domain_name(article['link'])
+                for link in pdf_links:
+                    try:
+                        link = prefix + link.get('href')
+                        if self.verbose:
+                            domain = self._extract_domain_name(article['link'])
+                            print('Getting article from {}: {}'.format(domain, link))
+                            
+                        r = requests.get(link)
+                        self._save_file(article['title'], r)
+                        break
+                    except Exception as e:
+                        if self.verbose:
+                            print("Non success url: ", prefix + link.get('href'))
+                            print(e)
         return True
     
     def _remove_between_tags(self, string):
@@ -287,7 +370,12 @@ class scrap:
         result = re.sub(pattern, "", string)
         return result
 
-    def _save_file(self, name, r):
+    def _extract_domain_name(self, url):
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        return domain
+
+    def _save_file(self, title, r):
         """
         Save a file to pdf format and text format
         
@@ -300,27 +388,27 @@ class scrap:
         """
         # Get the right name
         valid_chars = "-_.(), %s%s" % (string.ascii_letters, string.digits)
-        name = ''.join(c if c in valid_chars else '--' for c in name).strip('-')
+        title = ''.join(c if c in valid_chars else '--' for c in title).strip('-')
         i = 1
-        ori_name = name
+        ori_name = title
 
-        while os.path.exists(self.save_folder + self.sep + "download_pdf" + self.sep + name + ".pdf"):
-            name = "{}({})".format(ori_name, str(i))
+        while os.path.exists(self.save_folder + self.sep + "download_pdf" + self.sep + title + ".pdf"):
+            title = "{}({})".format(ori_name, str(i))
             i += 1
 
-        pdf_path = self.save_folder + self.sep + "download_pdf" + self.sep + name + ".pdf"
-        txt_path = self.save_folder + self.sep + "download_txt" + self.sep + name + ".txt"
+        pdf_path = self.save_folder + self.sep + "download_pdf" + self.sep + title + ".pdf"
+        txt_path = self.save_folder + self.sep + "download_txt" + self.sep + title + ".txt"
 
         # Write pdf file
         if self.verbose:
-            print("Saving pdf file: {}".format(name))
+            print("Saving pdf file: {}".format(title))
         pdf = open(pdf_path, 'wb')
         pdf.write(r.content)
         pdf.close()
 
         # Write txt file
         if self.verbose:
-            print("Saving txt file: {}".format(name))
+            print("Saving txt file: {}".format(title))
         file = open(txt_path, "w", encoding='utf-8')
         reader = PyPDF2.PdfReader(pdf_path, strict=False)
         for page in reader.pages:
@@ -329,13 +417,30 @@ class scrap:
         file.close()
 
 
-
 if __name__ == '__main__':
-    # # set up
+    # set up
     s = scrap(os.getenv('scopus_api_key'))
     s.set_verbose(True)
-    df = pd.read_csv('result.csv')
+    s._recreate_save_folder()
+    df = pd.read_csv(os.path.join(s.log_folder, 'monosaccharides.csv'))
     for row in df['title']:
         title = s._remove_between_tags(row)
         s._download_single_pdf(title)
-        time.sleep(1)
+    
+    # content = open("../log/view.html", 'rb')
+    # soup = BeautifulSoup(content, 'html.parser')
+    # elements = soup.find_all("h3", {"class": "gs_rt"})
+    # for e in elements:
+    #     for link in e.find_all('a'):
+    #         href = link.get('href')
+    #         print(href)
+        # href = link.get('href')
+        # if type(href) is str and "https://" in href:
+        #     print(href)
+    
+    # url = 'https://www.nature.com/articles/s41467-023-37365-4'
+    # user_agent = UserAgent()
+    # headers = {'User-Agent': user_agent.random}
+    # r = requests.get(url, headers=headers)
+    # with open('../log/view.html', 'wb') as f:
+    #     f.write(r.content)

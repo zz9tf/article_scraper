@@ -9,7 +9,7 @@ def view_dict(dictionary: dict):
 
 
 def view_proxys(proxys: list):
-    """ View a list of proxyin formated form"""
+    """ View a list of proxyin formated form """
     for element in proxys:
         view_dict(element)
         print()

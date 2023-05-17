@@ -1,4 +1,4 @@
-from utils import read_env, helper_funtion
+from utils import read_env, helper_function
 import re
 import os
 import time
