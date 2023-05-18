@@ -101,8 +101,12 @@ class scrap:
     def _donwload_aticles_based_on_local_csv(self, results):
         df = pd.read_csv(os.path.join(self.log_folder, results))
         articles = []
+        self.sciencedirect = 0
         
-        for i, row in enumerate(df['title', 'eid']):
+        for i, row in df[['title', 'eid']].iterrows():
+            if i >= self.inquire_num:
+                break
+            
             title = row['title']
             eid = row['eid']
             num_articles = len(articles)
@@ -110,8 +114,8 @@ class scrap:
             
             if self.verbose:
                 print("Downloading article: %s" % title)
-                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num
-                                                                          , 100*(success_download_num)/self.inquire_num
+                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
+                                                                          , 100*success_download_num/(i+1)
                                                                           , self._remove_between_tags(title)))
             
             if self._download_single_pdf(title, eid):
@@ -119,9 +123,9 @@ class scrap:
             
             if not self.verbose:
                 if len(articles) > num_articles:
-                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i, success_download_num, self.inquire_num, 
-                                                                                100*success_download_num/self.inquire_num
-                                                                             , self._remove_between_tags(title)))
+                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
+                                                                                 , 100*success_download_num/(i+1)
+                                                                                 , self._remove_between_tags(title)))
                 else:
                     print("{} | Article not found: {}".format(i, title))
 
@@ -137,7 +141,7 @@ class scrap:
                 # No more articles to get
                 print("No more articles to get!")
                 break
-            if len(articles) > self.inquire_num:
+            if len(articles) > self.inquire_num or (self.cursor is not None and i > self.inquire_num):
                 # I get enough articles
                 print("Get enough articles!")
                 break
@@ -377,7 +381,20 @@ class scrap:
                     if self.verbose:
                         print("Non success url: ", prefix + link.get('href'))
                         print(e)
-            elif self._extract_domain_name(article['link']) != 'www.sciencedirect.com':
+            elif self._extract_domain_name(article['link']) == 'www.sciencedirect.com':
+                self.sciencedirect += 1
+                if self.verbose:
+                    print("Science Direct: {}".format(self.sciencedirect))
+                if self.download_from_sciencedirect and eid != None:
+                    params = {
+                        'httpAccept': 'application/pdf',
+                        'apiKey': os.getenv('scopus_api_key')
+                    }
+                    link = 'https://api.elsevier.com/content/article/eid/{}-am.pdf'.format(eid)
+                    r = requests.get(link, params=params)
+                    if self._save_file(article['title'], r):
+                        downloaded = True
+            else:
                 # Go pdf from other websites
                 domain = self._extract_domain_name(article['link'])
                 prefix = "https://" + domain
@@ -415,15 +432,6 @@ class scrap:
                         if self.verbose:
                             print("Non success url: ", prefix + link.get('href'))
                             print(e)
-            elif self.download_from_sciencedirect and eid != None:
-                params = {
-                    'httpAccept': 'application/pdf',
-                    'apiKey': os.getenv('scopus_api_key')
-                }
-                link = 'https://api.elsevier.com/content/article/eid/{}-am.pdf'.format(eid)
-                r = requests.get(link, params=params)
-                if self._save_file(article['title'], r):
-                    downloaded = True
                 
         if downloaded:
             return True
