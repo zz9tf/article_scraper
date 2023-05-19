@@ -384,17 +384,18 @@ class scrap:
         
         if not downloaded:
             # Get link from google scholar
-            params = { 'q': title }
-            google_scholar_url = "https://scholar.lanfanshu.cn/scholar"
-            headers = {'User-Agent': self.user_agent.random}
-            try:
-                r = requests.get(google_scholar_url, params=params, headers=headers, timeout=self.waiting_time)
-                if self.verbose:
-                    print(r.url)
-                    print(r.status_code)
-            except:
-                return False
-            
+            for i in range(10):
+                params = { 'q': title }
+                google_scholar_url = "https://scholar.lanfanshu.cn/scholar"
+                headers = {'User-Agent': self.user_agent.random}
+                try:
+                    r = requests.get(google_scholar_url, params=params, headers=headers, timeout=self.waiting_time)
+                    if r.status_code == 200: break
+                except:
+                    return False
+            if self.verbose:
+                print(r.url)
+                print(r.status_code)
             with open(self.view_html, 'wb') as f:
                 f.write(r.content)
             soup = BeautifulSoup(r.content, 'html.parser')
@@ -425,9 +426,16 @@ class scrap:
                         if self.verbose:
                             print(r.url)
                             print(r.status_code)
-                        for url in js['choices']['choice']:
-                            if url['@type'] == 'AAM-PDF':
-                                link = url['$']
+                        
+                        link = None
+                        result = js['choices']['choice']
+                        if type(result) == dict:
+                            if result['@type'] == 'AAM-PDF':
+                                link = result['$']
+                        else:
+                            for url in result:
+                                if url['@type'] == 'AAM-PDF':
+                                    link = url['$']
                         
                         # Get PDF file from pdf link
                         params = { 'apiKey': os.getenv('scopus_api_key')}
