@@ -82,7 +82,7 @@ Contributions to the Article Scraper are welcome! If you find any issues or have
 
 ## License
 
-The Article Scraper is released under the MIT License. Feel free to modify and distribute the script according to the terms of the license.
+The Article Scraper is released under the [MIT License](LICENSE). Feel free to modify and distribute the script according to the terms of the license.
 
 ## Disclaimer
 
