@@ -15,6 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 import PyPDF2
+import magic
 import shutil
 import string
 
@@ -55,6 +56,10 @@ class scrap:
             os.mkdir(self.log_folder)
 
         self.view_html = os.path.join(self.log_folder, 'view.html')
+
+        # set up save length of pdf & txt files
+        self.length = 256 - len(os.path.join(self.save_folder, "download_pdf", ".pdf")) - 14
+
         self.verbose = verbose
 
     def _wait_utill_response(self, selector, filename):
@@ -69,7 +74,7 @@ class scrap:
         else:
             raise ValueError("Expected boolean value, got %s" % verbose)
 
-    def download_articles(self, inquire_num=None, query=None, start=0, downloaded=0, cursor=False, csv_only=False, results=None) -> None:
+    def download_articles(self, inquire_num=None, query=None, start=0, downloaded=0, cursor=False, csv_only=False, results=None, restart=False) -> None:
         """
         Args:
             num (int): The number of articles you want to download.
@@ -81,13 +86,21 @@ class scrap:
             cursor (bool): If you are limited for using '*' in api.
             csv_only (bool): If you just want to download csv file from api(which is more faster and stable)
             results (str): load results.csv locally downloaded from scopus.
+            restart (bool): If you want to restart to download articles based on previous index and downloaded articles.
         """
         self.inquire_num = inquire_num
         self.query = query
         self.start = start
         self.downloaded = downloaded
+
+        restart_path = os.path.join(self.log_folder, 'restart_index')
+        if restart and os.path.exists(restart_path):
+            with open(restart_path, 'r') as f:
+                js = json.loads(f.read())
+                self.start = js['start']
+                self.downloaded = js['downloaded']
         
-        if start == 0:
+        if self.start == 0:
             self._recreate_save_folder()
         
         if results is None:
@@ -130,10 +143,11 @@ class scrap:
         if self.inquire_num is None: self.inquire_num = len(df)
         articles = []
         
-        for i, row in df[['title', 'eid']].iterrows():
+        i = self.start
+        while i < len(df):
+            row = df.iloc[i]
             if i >= self.inquire_num:
                 break
-            
             title = row['title']
             eid = row['eid']
             
@@ -154,6 +168,10 @@ class scrap:
                 print("{} | Article not found: {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
                                                                              , 100*success_download_num/(i+1)
                                                                              , self._remove_between_tags(title)))
+            with open(os.path.join(self.log_folder, 'restart_index'), 'w') as f:
+                f.write(json.dumps({'start': i, 'downloaded': success_download_num}, indent=4))
+            
+            i += 1
 
     def _download_articles(self):
         articles = []
@@ -337,7 +355,7 @@ class scrap:
         entries = js['search-results']['entry']
         results = pd.DataFrame([self._parse_article(entry) for entry in entries])
         
-        # Go over all articles I get in one turn google search
+        # Go over all articles I get in one turn scopus search
         for i, row in results[['title', 'eid']].iterrows():
             title = row['title']
             eid = row['eid']
@@ -449,7 +467,7 @@ class scrap:
                             downloaded = True
                     except Exception as e:
                         if self.verbose:
-                            print("Non success url: ", prefix + link.get('href'))
+                            print("Non success url: ", link)
                             print(e)
                 
                 elif re.search(r'\bpdf\b', article['link'], re.I):
@@ -488,7 +506,7 @@ class scrap:
                             print(r.status_code)
                     except:
                         if self.verbose:
-                            print("Non success url: ", prefix + link.get('href'))
+                            print("Non success url: ", prefix + article['link'])
                             print(e)
                         continue
                     soup = BeautifulSoup(r.content, 'html.parser')
@@ -512,7 +530,7 @@ class scrap:
                                 downloaded = True
                         except Exception as e:
                             if self.verbose:
-                                print("Non success url: ", prefix + link.get('href'))
+                                print("Non success url: ", link)
                                 print(e)
                     
         if downloaded:
@@ -541,46 +559,37 @@ class scrap:
         Return:
             None
         """
-        try:
-            # Get the right name
-            valid_chars = "-_.(), %s%s" % (string.ascii_letters, string.digits)
-            title = ''.join(c if c in valid_chars else '--' for c in title).strip('-')
-            i = 1
-            ori_name = title
+        if magic.from_buffer(r.content, mime=True) != 'application/pdf':
+            return False
+        # Get the right name
+        valid_chars = "-_.(), %s%s" % (string.ascii_letters, string.digits)
+        title = ''.join(c if c in valid_chars else '' for c in title)[:self.length]
+        i = 1
+        ori_name = title
 
-            while os.path.exists(os.path.join(self.save_folder, "download_pdf", title + ".pdf")):
-                title = "{}({})".format(ori_name, str(i))
-                i += 1
+        while os.path.exists(os.path.join(self.save_folder, "download_pdf", title + ".pdf")):
+            title = "{}({})".format(ori_name, str(i))
+            i += 1
 
-            pdf_path = os.path.join(self.save_folder, "download_pdf", title + ".pdf")
-            txt_path = os.path.join(self.save_folder, "download_txt", title + ".txt")
+        pdf_path = os.path.join(self.save_folder, "download_pdf", title + ".pdf")
+        txt_path = os.path.join(self.save_folder, "download_txt", title + ".txt")
 
-            # Write pdf file
-            if self.verbose:
-                print("Saving pdf file: {}".format(title))
-            pdf = open(pdf_path, 'wb')
+        # Write pdf file
+        if self.verbose:
+            print("Saving pdf file: {}".format(title))
+        
+        with open(pdf_path, 'wb') as pdf:
             pdf.write(r.content)
-            pdf.close()
 
-            # Write txt file
-            if self.verbose:
-                print("Saving txt file: {}".format(title))
-            file = open(txt_path, "w", encoding='utf-8')
+        # Write txt file
+        if self.verbose:
+            print("Saving txt file: {}".format(title))
+        with open(txt_path, "w", encoding='utf-8') as file:
             reader = PyPDF2.PdfReader(pdf_path, strict=False)
             for page in reader.pages:
                 content = page.extract_text()
                 file.write(content + '\n')
-            file.close()
-        
-        except:
-            if os.path.exists(pdf_path):
-                os.remove(pdf_path)
-            if os.path.exists(txt_path):
-                os.remove(txt_path)
-            return False
-        
         return True
-
 
 if __name__ == '__main__':
     # set up
