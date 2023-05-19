@@ -38,7 +38,6 @@ class scrap:
 
         self.view_html = os.path.join(self.log_folder, 'view.html')
         self.verbose = verbose
-        self.sep = os.path.sep
 
     def set_verbose(self, verbose):
         if type(verbose) is bool:
@@ -46,7 +45,7 @@ class scrap:
         else:
             raise ValueError("Expected boolean value, got %s" % verbose)
 
-    def download_articles(self, inquire_num, query, start=0, downloaded=0, cursor=False, csv_only=False, results=None, download_from_sciencedirect=False) -> None:
+    def download_articles(self, inquire_num=None, query=None, start=0, downloaded=0, cursor=False, csv_only=False, results=None) -> None:
         """
         Args:
             num (int): The number of articles you want to download.
@@ -58,23 +57,26 @@ class scrap:
             cursor (bool): If you are limited for using '*' in api.
             csv_only (bool): If you just want to download csv file from api(which is more faster and stable)
             results (str): load results.csv locally downloaded from scopus.
-            download_from_sciencedirect (bool): If you want to use api key to download articles from sciencedirect.
         """
         self.inquire_num = inquire_num
         self.query = query
         self.start = start
         self.downloaded = downloaded
-        self.cursor = '*' if cursor else None  # limit number 5000 if cursor is None
-        self.csv_only = csv_only
-        self.download_from_sciencedirect = download_from_sciencedirect
         
         if start == 0:
             self._recreate_save_folder()
         
-        if results is not None:
-            self._donwload_aticles_based_on_local_csv(results)
-        else:
+        if results is None:
+            assert inquire_num == None, "Inquire number should be a specific number"
+            assert query == None, "query should be a specific string"
+ 
+            self.cursor = '*' if cursor else None  # limit number 5000 if cursor is None
+            self.csv_only = csv_only
+            
             self._download_articles()
+            
+        else:
+            self._donwload_aticles_based_on_local_csv(results)
 
     def _recreate_save_folder(self):
         """
@@ -100,8 +102,8 @@ class scrap:
 
     def _donwload_aticles_based_on_local_csv(self, results):
         df = pd.read_csv(os.path.join(self.log_folder, results))
+        if self.inquire_num is None: self.inquire_num = len(df)
         articles = []
-        self.sciencedirect = 0
         
         for i, row in df[['title', 'eid']].iterrows():
             if i >= self.inquire_num:
@@ -109,31 +111,30 @@ class scrap:
             
             title = row['title']
             eid = row['eid']
-            num_articles = len(articles)
-            success_download_num = len(articles)+self.downloaded
+            
+            articles_num_before_download = len(articles)
             
             if self.verbose:
                 print("Downloading article: %s" % title)
-                print("{} | Getting ariticles {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
-                                                                          , 100*success_download_num/(i+1)
-                                                                          , self._remove_between_tags(title)))
-            
+                
             if self._download_single_pdf(title, eid):
                 articles.append(title)
             
-            if not self.verbose:
-                if len(articles) > num_articles:
-                    print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
-                                                                                 , 100*success_download_num/(i+1)
-                                                                                 , self._remove_between_tags(title)))
-                else:
-                    print("{} | Article not found: {}".format(i, title))
+            success_download_num = len(articles)+self.downloaded
+            if len(articles) > articles_num_before_download:
+                print("{} | Downloaded ariticles {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
+                                                                             , 100*success_download_num/(i+1)
+                                                                             , self._remove_between_tags(title)))
+            else:
+                print("{} | Article not found: {}({}) {:.2f}% | {}".format(i+1, success_download_num, self.inquire_num
+                                                                             , 100*success_download_num/(i+1)
+                                                                             , self._remove_between_tags(title)))
 
     def _download_articles(self):
         articles = []
         scopus_results = []
         limit_num = 5000 if self.cursor is None else 0
-        count_num = 25
+        self.count_num = 200
         # loop to download pdf link
         i = self.start
         while True:
@@ -165,7 +166,7 @@ class scrap:
             else:
                 self._download_articles_based_on_search(js, i, articles)
                 
-            i += count_num
+            i += self.count_num
 
     def _search_article_names_from_scopus(self, index):
         '''
@@ -183,15 +184,15 @@ class scrap:
         '''
         if self.cursor is None:
             par = {'apikey': self.scopus_api_key, 'query': self.query, 'start': index,
-                'httpAccept': 'application/json', 'view': 'STANDARD', 
+                'httpAccept': 'application/json', 'view': 'STANDARD', 'count': str(self.count_num),
                 }
         elif self.cursor == '*':
             par = {'apikey': self.scopus_api_key, 'query': self.query, 'start': index, "cursor": self.cursor, 
-                'httpAccept': 'application/json', 'view': 'STANDARD', 
+                'httpAccept': 'application/json', 'view': 'STANDARD',  'count': str(self.count_num),
                 }
         else:
             par = {'apikey': self.scopus_api_key, 'query': self.query, "cursor": self.cursor, 
-                'httpAccept': 'application/json', 'view': 'STANDARD', 
+                'httpAccept': 'application/json', 'view': 'STANDARD', 'count': str(self.count_num),
                 }
         r = requests.get("https://api.elsevier.com/content/search/scopus", params=par)
         
@@ -371,6 +372,8 @@ class scrap:
                     print('Getting article from google scholar:', article['link'])
                 try:
                     r = requests.get(article['link'], timeout=self.waiting_time)
+                    with open(self.view_html, 'wb') as f:
+                        f.write(r.content)
                     if self.verbose:
                         print(r.url)
                         print(r.status_code)
@@ -381,19 +384,18 @@ class scrap:
                     if self.verbose:
                         print("Non success url: ", prefix + link.get('href'))
                         print(e)
-            elif self._extract_domain_name(article['link']) == 'www.sciencedirect.com':
-                self.sciencedirect += 1
-                if self.verbose:
-                    print("Science Direct: {}".format(self.sciencedirect))
-                if self.download_from_sciencedirect and eid != None:
-                    params = {
-                        'httpAccept': 'application/pdf',
-                        'apiKey': os.getenv('scopus_api_key')
-                    }
-                    link = 'https://api.elsevier.com/content/article/eid/{}-am.pdf'.format(eid)
-                    r = requests.get(link, params=params)
-                    if self._save_file(article['title'], r):
-                        downloaded = True
+            elif self._extract_domain_name(article['link']) == 'www.sciencedirect.com' and eid is not None:
+                # Get pdf from science direct
+                params = {
+                    'httpAccept': 'application/pdf',
+                    'apiKey': os.getenv('scopus_api_key')
+                }
+                link = 'https://api.elsevier.com/content/article/eid/{}-am.pdf'.format(eid)
+                r = requests.get(link, params=params)
+                with open(self.view_html, 'wb') as f:
+                    f.write(r.content)
+                if self._save_file(article['title'], r):
+                    downloaded = True
             else:
                 # Go pdf from other websites
                 domain = self._extract_domain_name(article['link'])
@@ -404,6 +406,8 @@ class scrap:
                     print('Searching url:', article['link'])
                 try:
                     r = requests.get(article['link'], timeout=self.waiting_time)
+                    with open(self.view_html, 'wb') as f:
+                        f.write(r.content)
                     if self.verbose:
                         print(r.url)
                         print(r.status_code)
@@ -423,6 +427,8 @@ class scrap:
                         if self.verbose:
                             print('Getting article from {}: {}'.format(domain, link))
                         r = requests.get(link, timeout=self.waiting_time)
+                        with open(self.view_html, 'wb') as f:
+                            f.write(r.content)
                         if self.verbose:
                             print(r.url)
                             print(r.status_code)
@@ -466,12 +472,12 @@ class scrap:
             i = 1
             ori_name = title
 
-            while os.path.exists(self.save_folder + self.sep + "download_pdf" + self.sep + title + ".pdf"):
+            while os.path.exists(os.path.join(self.save_folder, "download_pdf", title + ".pdf")):
                 title = "{}({})".format(ori_name, str(i))
                 i += 1
 
-            pdf_path = self.save_folder + self.sep + "download_pdf" + self.sep + title + ".pdf"
-            txt_path = self.save_folder + self.sep + "download_txt" + self.sep + title + ".txt"
+            pdf_path = os.path.join(self.save_folder, "download_pdf", title + ".pdf")
+            txt_path = os.path.join(self.save_folder, "download_txt", title + ".txt")
 
             # Write pdf file
             if self.verbose:
