@@ -1,4 +1,4 @@
-from utils import read_env, proxy_headers
+from utils import read_env
 import re
 import os
 import pandas as pd
@@ -26,7 +26,7 @@ class scrap:
         self.scopus_api_key = scopus_api_key
         
         # get proxies
-        self.proxies = proxy_headers._get_proxies()
+        # self.proxies = proxy_headers._get_proxies()
         
         # set up selenium driver
         # self.driver = webdriver.Chrome()

@@ -15,11 +15,29 @@ PS: Your university/institution has to have right to use **Elsevier Research API
 Before using the Article Scraper, ensure that you have the following prerequisites installed and prepared:
 
 - [Elsevier Research API key](https://dev.elsevier.com/)
+- Python 3.x installed
 - Required Python packages (listed in requirements.txt)
 
 ## Installation
 
-To install the necessary Python packages, run the following command:
+1. Clone the repository or download the script to your local machine.
+
+```
+git clone https://github.com/zz9tf/article_scraper.git
+```
+
+2. Open a terminal or command prompt and navigate to the project directory.
+```
+cd repository
+```
+
+3. Create .env file at root folder:
+```
+# scraper.py
+scopus_api_key=<your Elsevier Research api key>
+```
+
+4. To install the necessary Python packages, run the following command:
 
 ```
 # Setup environment
@@ -32,40 +50,46 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Clone the repository or download the script to your local machine.
-
-2. Open a terminal or command prompt and navigate to the project directory.
-
-3. create .env file at root folder:
-
+Run the following command to execute the scraper:
 ```
-# scraper.py
-scopus_api_key=<your Elsevier Research api key>
+python article_scraper.py --num <number_of_articles> --query <search_query> --start <start_index> --downloaded <num_downloaded> --cursor --csv_only --results <results_csv_file> --restart --prefix <prefix_number>
 ```
 
-3. Run the following command to execute the scraper:
-```
-python article_scraper.py --topic "your_topic_here" --output "output_directory"
-```
-Replace "your_topic_here" with the specific topic or keyword you want to search for.
-Replace "output_directory" with the desired directory where the articles will be saved.
+The available command-line arguments are as follows:
 
-4. Sit back and relax while the scraper retrieves the articles for you. The progress will be displayed in the terminal.
+--num: The number of articles to download.
+--query: The query used on Google Scholar search.
+--start: The starting index of articles to download.
+--downloaded: The number of articles already downloaded.
+--cursor: Limit the use of '*' in the API.
+--csv_only: Download only the CSV file from the API.
+--results: Load results.csv locally downloaded from Scopus.
+--restart: Restart the download process based on the previous index and downloaded articles.
+--prefix: Start a customer prefix mode (1 or 2 or any customer prefix mode you set in main.py).
 
 PS: You need to use your institution's direct IP network for this script, because Elsevier Research API will only be authenticated if you use it while within the network of your university/institution.
 
 ## Examples
 Here are a few examples of how to use the Article Scraper:
 
-To download articles related to "machine learning" and save them in the "articles" folder:
+1. Download articles using the Scopus API:
 ```
-python article_scraper.py --topic "machine learning" --output "articles"
+python article_scraper.py --num 10000 --query "your_topic_here"
 ```
 
-To search for articles on "data visualization" and store them in the current directory:
-
+2. Download only articles meta info from the Scopus API and save as a CSV file:
 ```
-python article_scraper.py --topic "data visualization" --output "."
+python article_scraper.py --num 10000 --query "your_topic_here" --csv_only
+```
+
+3. Download articles based on a locally downloaded results.csv file:
+```
+python article_scraper.py --results results.csv --restart
+```
+
+4. Start a custom prefix mode (You can setup your own custom prefix pipeline):
+```
+python article_scraper.py --prefix <your custom number>
 ```
 
 ## Limitations
