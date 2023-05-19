@@ -94,7 +94,7 @@ class scrap:
         self.downloaded = downloaded
 
         restart_path = os.path.join(self.log_folder, 'restart_index')
-        if restart and os.path.exists(restart_path):
+        if restart and os.path.exists(restart_path) and self.start == 0:
             with open(restart_path, 'r') as f:
                 js = json.loads(f.read())
                 self.start = js['start']
