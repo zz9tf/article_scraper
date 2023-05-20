@@ -31,7 +31,7 @@ def usage():
     # Add argument for restarting the download process based on previous index and downloaded articles
     parser.add_argument("--restart", action="store_true", help="Restart the download process")
 
-    parser.add_argument("--prefix", action=int, default=None, help="Start a customer prefix mode")
+    parser.add_argument("--prefix", type=int, default=None, help="Start a customer prefix mode")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -47,7 +47,7 @@ def usage():
     restart = args.restart
     prefix = args.prefix
 
-    if perfix is None:
+    if prefix is None:
         # Call the article scraper function with the provided topic and output directory
         key = os.getenv('scopus_api_key')
         s = scrap(key, True)

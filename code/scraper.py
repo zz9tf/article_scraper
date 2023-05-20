@@ -1,4 +1,4 @@
-from utils import read_env
+from utils import read_env, proxy_headers
 import re
 import os
 import pandas as pd
@@ -7,7 +7,11 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
+from urllib.parse import urlencode
 from urllib.parse import urlparse
+import urllib3
+# Disable the warnings for insecure requests
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from difflib import SequenceMatcher
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
@@ -26,7 +30,8 @@ class scrap:
         self.scopus_api_key = scopus_api_key
         
         # get proxies
-        # self.proxies = proxy_headers._get_proxies()
+        self.proxies = proxy_headers._get_proxies()
+        self.proxyID = 0
         
         # set up selenium driver
         # self.driver = webdriver.Chrome()
@@ -56,6 +61,7 @@ class scrap:
             os.mkdir(self.log_folder)
 
         self.view_html = os.path.join(self.log_folder, 'view.html')
+        self.bad_url_log = open(os.path.join(self.log_folder, 'bad_url'), 'w')
 
         # set up save length of pdf & txt files
         self.length = 256 - len(os.path.join(self.save_folder, "download_pdf", ".pdf")) - 14
@@ -114,7 +120,9 @@ class scrap:
             
         else:
             self._donwload_aticles_based_on_local_csv(results)
-        self.driver.quit()
+        
+        # self.driver.quit()
+        self.bad_url_log.close()
 
     def _recreate_save_folder(self):
         """
@@ -154,7 +162,7 @@ class scrap:
             articles_num_before_download = len(articles)
             
             if self.verbose:
-                print("Downloading article: %s" % title)
+                print("\nDownloading article: %s" % title)
                 
             if self._download_single_pdf(title, eid):
                 articles.append(title)
@@ -370,7 +378,6 @@ class scrap:
                                                                           , self._remove_between_tags(title)))
             if self._download_single_pdf(title, eid):
                 articles.append(title)
-                break
 
             if not self.verbose:
                 if len(articles) > num_articles:
@@ -383,160 +390,171 @@ class scrap:
     def _download_single_pdf(self, title, eid):
         title = self._remove_between_tags(title)
         downloaded = False
+        log = '\nTitle: ' + title + '\n'
         
-        if eid is pd.NA:
+        if eid is not pd.NA:
+            if self.verbose:
+                print(">>> eid <<<")
             # Get pdf from science direct eid
-            params = {
-                'httpAccept': 'application/pdf',
-                'apiKey': os.getenv('scopus_api_key')
-            }
             link = 'https://api.elsevier.com/content/article/eid/{}-am.pdf'.format(eid)
-            r = requests.get(link, params=params)
-            if self.verbose:
-                print(r.url)
-                print(r.status_code)
-            with open(self.view_html, 'wb') as f:
-                f.write(r.content)
-            if self._save_file(title, r):
-                downloaded = True
-        
-        if not downloaded:
-            # Get link from google scholar
-            for i in range(10):
-                params = { 'q': title }
-                google_scholar_url = "https://scholar.lanfanshu.cn/scholar"
-                headers = {'User-Agent': self.user_agent.random}
-                try:
-                    r = requests.get(google_scholar_url, params=params, headers=headers, timeout=self.waiting_time)
-                    if r.status_code == 200: break
-                except:
-                    return False
-            if self.verbose:
-                print(r.url)
-                print(r.status_code)
-            with open(self.view_html, 'wb') as f:
-                f.write(r.content)
-            soup = BeautifulSoup(r.content, 'html.parser')
-            # Get link from google scholar
-            articles = []
-            elements = soup.find_all("h3", {"class": "gs_rt"})
-            for e in elements:
-                for link in e.find_all('a'):
-                    if SequenceMatcher(None, title, link.text).ratio() > 0.5:
-                        articles.append({'title': title, 'link': link.get('href')})
+            params = { 'httpAccept': 'application/pdf', 'apiKey': os.getenv('scopus_api_key') }
+            r = self._response_based_on_request(link, params=params)
+            if r is not None and self._save_file(title, r):
+                return True
+            else:
+                link = link + "?" + urlencode(params)
+                log += 'eid: ' + link + '\n'
+                if self.verbose:
+                    print("Not success url: ", link)
             
-            # Search pdf link from article search result
-            for article in articles:
-                if downloaded:
-                    break
-                
-                if self._extract_domain_name(article['link']) == "www.sciencedirect.com":
-                    # Go pdf from sciencedrict
-                    try:
-                        # Get pdf link from api
-                        params = { 'apiKey': os.getenv('scopus_api_key'), 'httpAccept':'application/json' }
-                        pii = article['link'].split('/')[-1]
-                        link = 'https://api.elsevier.com/content/object/pii/{}'.format(pii)
-                        r = requests.get(link, params=params, timeout=self.waiting_time)
-                        js = r.json()
-                        with open(self.view_html, 'w') as f:
-                            json.dump(js, f, indent=4)
-                        if self.verbose:
-                            print(r.url)
-                            print(r.status_code)
-                        
-                        link = None
-                        result = js['choices']['choice']
-                        if type(result) == dict:
-                            if result['@type'] == 'AAM-PDF':
-                                link = result['$']
-                        else:
-                            for url in result:
-                                if url['@type'] == 'AAM-PDF':
-                                    link = url['$']
-                        
-                        # Get PDF file from pdf link
-                        params = { 'apiKey': os.getenv('scopus_api_key')}
-                        r = requests.get(link, params=params, timeout=self.waiting_time)
-                        with open(self.view_html, 'wb') as f:
-                            f.write(r.content)
-                        if self.verbose:
-                            print(r.url)
-                            print(r.status_code)
-                        if self._save_file(article['title'], r):
-                            downloaded = True
-                    except Exception as e:
-                        if self.verbose:
-                            print("Non success url: ", link)
-                            print(e)
-                
-                elif re.search(r'\bpdf\b', article['link'], re.I):
-                    # Get pdf from google scholar
-                    if self.verbose:
-                        print('Getting article from google scholar:', article['link'])
-                    try:
-                        r = requests.get(article['link'], timeout=self.waiting_time)
-                        with open(self.view_html, 'wb') as f:
-                            f.write(r.content)
-                        if self.verbose:
-                            print(r.url)
-                            print(r.status_code)
-                        if self._save_file(article['title'], r):
-                            downloaded = True
-                            
-                    except Exception as e:
-                        if self.verbose:
-                            print("Non success url: ", prefix + link.get('href'))
-                            print(e)
-                
+        # Get link from google scholar
+        link = "https://scholar.lanfanshu.cn/scholar"
+        params = { 'q': title }
+        headers = {'User-Agent': self.user_agent.random}
+        r = self._response_based_on_request(link, params=params, headers=headers)
+        if r is not None and r.status_code < 200 or r.status_code > 300:
+            link = link + "?" + urlencode(params)
+            log += 'google scholar: ' + r.url + '\n'
+            if self.verbose:
+                print("Non success url: ", link)
+            self.bad_url_log.write(log)
+            return False
+        
+        soup = BeautifulSoup(r.content, 'html.parser')
+        # Get link from google scholar
+        articles = []
+        elements = soup.find_all("h3", {"class": "gs_rt"})
+        for e in elements:
+            for link in e.find_all('a'):
+                if SequenceMatcher(None, title, link.text).ratio() > 0.5:
+                    articles.append({'title': title, 'link': link.get('href')})
+        
+        # Search pdf link from article search result
+        for article in articles:
+            if downloaded:
+                break
+            
+            if self._extract_domain_name(article['link']) == "www.sciencedirect.com":
+                if self.verbose:
+                    print(">>> sciencedirect <<<")
+                # Go pdf from sciencedrict
+                pii = article['link'].split('/')[-1]
+                link = 'https://api.elsevier.com/content/object/pii/{}'.format(pii)
+                params = { 'apiKey': os.getenv('scopus_api_key'), 'httpAccept':'application/json' }
+                # Get pdf link from api
+                r = self._response_based_on_request(link, params=params, save_js=True)
+                if r is None: continue
+                new_link = self._get_link_from_js(r.json())
+                if new_link is None:
+                    # I didn't get valid pdf link from api
+                    continue
+                link = new_link
+                # Get PDF file from pdf link
+                params = { 'httpAccept': 'application/pdf', 'apiKey': os.getenv('scopus_api_key') }
+                r = self._response_based_on_request(link, params=params)
+                if r is not None and self._save_file(article['title'], r):
+                    downloaded = True
                 else:
-                    # Go pdf from other websites
-                    domain = self._extract_domain_name(article['link'])
-                    prefix = "https://" + domain
-                    
-                    # Get pdf link from other websites | Deep search
+                    link = link + "?" + urlencode(params)
+                    log += 'sciencedirect: ' + link + '\n'
                     if self.verbose:
-                        print('Searching url:', article['link'])
-                    try:
-                        r = requests.get(article['link'], timeout=self.waiting_time)
-                        with open(self.view_html, 'wb') as f:
-                            f.write(r.content)
+                        print("Not success url: ", link)
+            
+            elif re.search(r'\bpdf\b', article['link'], re.I):
+                if self.verbose:
+                    print(">>> google scholar <<<")
+                # Get pdf from google scholar
+                link = article['link']
+                r = self._response_based_on_request(link)
+                if r is not None and self._save_file(article['title'], r):
+                    downloaded = True
+                else:
+                    log += 'google pdf: ' + link + '\n'
+                    if self.verbose:
+                        print("Not success url: ", prefix + link.get('href'))
+            
+            else:
+                if self.verbose:
+                    print(">>> other websites <<<")
+                # Get pdf link from other websites | Deep search
+                link = article['link']
+                r = self._response_based_on_request(link, headers=headers)
+                if r is not None and r.status_code < 200 or r.status_code > 300:
+                    log += 'other: ' + link + '\n'
+                    if self.verbose:
+                        print("Not success url: ",  link)
+                    continue
+                
+                soup = BeautifulSoup(r.content, 'html.parser')
+                pdf_links = soup.find_all('a', href=lambda href: href and re.search(r'\bpdf\b', href, re.I))
+                # Get PDF file from pdf link
+                for link in pdf_links:
+                    if downloaded:
+                        break
+                    parsed_link = urlparse(link.get('href'))
+                    if bool(parsed_link.scheme and parsed_link.netloc):
+                        link = link.get('href')
+                    else:
+                        prefix = "https://" + self._extract_domain_name(article['link'])
+                        link = prefix + link.get('href')
+                    if self.verbose:
+                        print(">>> {} <<<".format(self._extract_domain_name(article['link'])))
+                    r = self._response_based_on_request(link, headers=headers)
+                    if r is not None and self._save_file(title, r):
+                        downloaded = True
+                    else:
+                        log += 'other pdf: ' + r.url + '\n'
                         if self.verbose:
-                            print(r.url)
-                            print(r.status_code)
-                    except:
-                        if self.verbose:
-                            print("Non success url: ", prefix + article['link'])
-                            print(e)
-                        continue
-                    soup = BeautifulSoup(r.content, 'html.parser')
-                    pdf_links = soup.find_all('a', href=lambda href: href and re.search(r'\bpdf\b', href, re.I))
-                    
-                    # Get PDF file from pdf link
-                    for link in pdf_links:
-                        if downloaded:
-                            break
-                        try:
-                            link = prefix + link.get('href')
-                            if self.verbose:
-                                print('Getting article from {}: {}'.format(domain, link))
-                            r = requests.get(link, timeout=self.waiting_time)
-                            with open(self.view_html, 'wb') as f:
-                                f.write(r.content)
-                            if self.verbose:
-                                print(r.url)
-                                print(r.status_code)
-                            if self._save_file(article['title'], r):
-                                downloaded = True
-                        except Exception as e:
-                            if self.verbose:
-                                print("Non success url: ", link)
-                                print(e)
-                    
+                            print("Not success url: ", link)
         if downloaded:
             return True
         else:
+            self.bad_url_log.write(log)
             return False
+    
+    def _response_based_on_request(self, link, headers=None, params=None, save_js=False):
+        try:
+            if self.verbose:
+                if params is not None:
+                    print("search:", link + "?" + urlencode(params))
+                else:
+                    print("search:", link)
+            # Get response from url
+            if headers == None and params == None:
+                r = requests.get(link, timeout=self.waiting_time, verify=False)
+            elif headers == None:
+                r = requests.get(link, params=params, timeout=self.waiting_time, verify=False)
+            elif params == None:
+                r = requests.get(link, headers=headers, timeout=self.waiting_time, verify=False)
+            else:
+                r = requests.get(link, headers=headers, params=params, timeout=self.waiting_time, verify=False)
+            if r.status_code >= 200 and r.status_code <= 300:
+                if not save_js:
+                    with open(self.view_html, 'wb') as f:
+                        f.write(r.content)
+                else:
+                    js = r.json()
+                    with open(self.view_html, 'w') as f:
+                        json.dump(js, f, indent=4)
+
+            if self.verbose:
+                print(r.status_code)
+            
+            return r
+        except Exception as e:
+            print(e)
+            return None
+    
+    def _get_link_from_js(self, js):
+        result = js['choices']['choice']
+        if type(result) == dict:
+            if result['@type'] == 'AAM-PDF':
+                return result['$']
+        else:
+            for url in result:
+                if url['@type'] == 'AAM-PDF':
+                    return url['$']
+        return None
     
     def _remove_between_tags(self, string):
         pattern = r"<[^>]+>"
