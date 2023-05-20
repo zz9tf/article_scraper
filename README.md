@@ -41,7 +41,7 @@ scopus_api_key=<your Elsevier Research api key>
 
 ```
 # Setup environment
-conda create --name art_scr
+conda create --name art_scr python=3.11
 conda activate art_scr
 
 # Install packages
