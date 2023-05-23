@@ -57,15 +57,15 @@ python article_scraper.py --num <number_of_articles> --query <search_query> --st
 
 The available command-line arguments are as follows:
 
---num: The number of articles to download.
---query: The query used on Google Scholar search.
---start: The starting index of articles to download.
---downloaded: The number of articles already downloaded.
---cursor: Limit the use of '*' in the API.
---csv_only: Download only the CSV file from the API.
---results: Load results.csv locally downloaded from Scopus.
---restart: Restart the download process based on the previous index and downloaded articles.
---prefix: Start a customer prefix mode (1 or 2 or any customer prefix mode you set in main.py).
+- --num: The number of articles to download.
+- --query: The query used on Google Scholar search.
+- --start: The starting index of articles to download.
+- --downloaded: The number of articles already downloaded.
+- --cursor: Limit the use of '*' in the API.
+- --csv_only: Download only the CSV file from the API.
+- --results: Load results.csv locally downloaded from Scopus.
+- --restart: Restart the download process based on the previous index and downloaded articles.
+- --prefix: Start a customer prefix mode (1 or 2 or any customer prefix mode you set in main.py).
 
 PS: You need to use your institution's direct IP network for this script, because Elsevier Research API will only be authenticated if you use it while within the network of your university/institution.
 
